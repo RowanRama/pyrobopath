@@ -119,11 +119,31 @@ class FCLRobotBBCollisionModel(FCLBoxCollisionModel):
         p_eef_anchor = value[:2] - self.anchor[:2]
         dir = unit_vector2(p_eef_anchor)
 
-        self._eef_transform = Transform.Rz(np.arctan2(dir[1], dir[0]))
+        # Compute rotation angle
+        angle = np.arctan2(dir[1], dir[0])
+
+        # Set rotation quaternion directly without creating Transform object
+        # quat.from_rotation_vector([0, 0, theta]) is expensive, use direct computation
+        # For Rz rotation: q = [cos(theta/2), 0, 0, sin(theta/2)]
+        half_angle = angle * 0.5
+        cos_half = np.cos(half_angle)
+        sin_half = np.sin(half_angle)
+        rot_quat = quaternion.quaternion(cos_half, 0.0, 0.0, sin_half)
+
+        self._eef_transform.quat = rot_quat
         self._eef_transform.t = value
 
-        self._transform.quat = self._eef_transform.quat
-        self._transform.t = self._eef_transform * self._box_center_in_eef
+        self._transform.quat = rot_quat
+        # Manually compute rotation without creating Transform: rot_quat * offset + value
+        # For Rz quaternion, this simplifies to rotating 2D vector in XY plane
+        offset = self._box_center_in_eef
+        cos_angle = np.cos(angle)
+        sin_angle = np.sin(angle)
+        self._transform.t = np.array([
+            value[0] + offset[0] * cos_angle - offset[1] * sin_angle,
+            value[1] + offset[0] * sin_angle + offset[1] * cos_angle,
+            value[2] + offset[2]
+        ])
 
     @property
     def anchor(self):

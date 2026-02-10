@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import quaternion as quat
 import numpy.testing as nt
-from gcodeparser import GcodeParser
+from gcodeparser import parse_gcode_lines
 
 from pyrobopath.toolpath.path.spline import CubicBSpline2
 from pyrobopath.toolpath import Toolpath, Contour
@@ -24,16 +24,16 @@ class TestToolpath(unittest.TestCase):
         """Test gcode parsing capabilitity"""
         with open(TEST_GCODE1, "r") as f:
             gcode = f.read()
-        parsed_gcode = GcodeParser(gcode)
+        parsed_gcode = list(parse_gcode_lines(gcode))
 
-        toolpath = Toolpath.from_gcode(parsed_gcode.lines)
+        toolpath = Toolpath.from_gcode(parsed_gcode)
         self.assertEqual(len(toolpath.contours), 128, "Number gcode contours != 128")
 
         with open(TEST_GCODE2, "r") as f:
             gcode = f.read()
-        parsed_gcode = GcodeParser(gcode)
+        parsed_gcode = list(parse_gcode_lines(gcode))
 
-        toolpath = Toolpath.from_gcode(parsed_gcode.lines)
+        toolpath = Toolpath.from_gcode(parsed_gcode)
         self.assertEqual(len(toolpath.contours), 252, "Number gcode contours != 252")
 
     def test_contour(self):

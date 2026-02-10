@@ -26,13 +26,23 @@ def continuous_collide(
     len2 = np.linalg.norm(dir2)
 
     n = int(np.ceil(max(len1, len2) / threshold))
-    collision_result = False
-    for s in np.linspace(0.0, 1.0, n):
-        model1.translation = start1 + dir1 * s
-        model2.translation = start2 + dir2 * s
-        if model1.in_collision(model2):
-            collision_result = True
-            break
+
+    # Avoid creating linspace array - iterate with pre-computed step
+    if n <= 1:
+        # Check only the endpoints
+        model1.translation = trans1_final
+        model2.translation = trans2_final
+        collision_result = model1.in_collision(model2)
+    else:
+        collision_result = False
+        step = 1.0 / (n - 1)
+        for i in range(n):
+            s = i * step
+            model1.translation = start1 + dir1 * s
+            model2.translation = start2 + dir2 * s
+            if model1.in_collision(model2):
+                collision_result = True
+                break
 
     # reset model position
     model1.translation = start1
@@ -44,11 +54,12 @@ class _ConcurrentSegmentIterator:
     """An iterator to loop over concurrent sections of trajectory segments."""
 
     def __init__(self, trajs: List[Trajectory]):
-        unique_times = set()
+        # Collect unique times more efficiently using a single list extension
+        all_times = []
         for t in trajs:
-            times = [p.time for p in t]
-            unique_times = unique_times.union(times)
-        self.unique_times = sorted(list(unique_times))
+            all_times.extend([p.time for p in t.points])
+        # Sort and remove duplicates
+        self.unique_times = sorted(set(all_times))
 
         self.trajs = trajs
         self.idx = 0

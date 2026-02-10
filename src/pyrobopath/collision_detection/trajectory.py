@@ -11,7 +11,8 @@ class TrajectoryPoint(object):
     """Generic trajectory point described as a one dimensional vector"""
 
     def __init__(self, data: ArrayLike, time: float):
-        self.data = np.array(data)
+        # Avoid unnecessary copy if data is already a numpy array
+        self.data = data if isinstance(data, np.ndarray) else np.array(data)
         self.time = time
 
     def __lt__(self, other: TrajectoryPoint):
@@ -145,20 +146,64 @@ class Trajectory:
         if start > self.end_time() or end < self.start_time():
             return Trajectory()
 
-        new_traj = Trajectory()
-        start_point = self.get_point_at_time(start)
-        if start_point is not None:
-            new_traj.add_traj_point(start_point)
-
         # if the start time is the end time, return a single point
         if start == end:
+            new_traj = Trajectory()
+            start_point = self.get_point_at_time(start)
+            if start_point is not None:
+                new_traj.add_traj_point(start_point)
             return new_traj
 
-        new_traj.points += [p for p in self.points if p.time > start and p.time < end]
+        # Use bisect to find start and end indices efficiently
+        times = [p.time for p in self.points]
+        start_idx = bisect.bisect_left(times, start)
+        end_idx = bisect.bisect_right(times, end)
 
-        end_point = self.get_point_at_time(end)
-        if end_point is not None:
-            new_traj.add_traj_point(end_point)
+        new_traj = Trajectory()
+
+        # Add start point (exact match or interpolated)
+        if start >= self.start_time() and start <= self.end_time():
+            if start_idx < len(times) and abs(times[start_idx] - start) < 1e-10:
+                # Exact match at start
+                start_point = self.points[start_idx]
+            elif start_idx > 0:
+                # Interpolate between points
+                s = self.points[start_idx - 1]
+                e = self.points[start_idx] if start_idx < len(times) else self.points[-1]
+                if abs(e.time - s.time) < 1e-10:
+                    start_point = s
+                else:
+                    interp_s = (start - s.time) / (e.time - s.time)
+                    start_point = s.interp(e, interp_s)
+            else:
+                # start_idx == 0, use first point
+                start_point = self.points[0]
+            new_traj.add_traj_point(start_point)
+
+        # Add all intermediate points (strictly between start and end)
+        for i in range(start_idx, min(end_idx, len(self.points))):
+            if self.points[i].time > start and self.points[i].time < end:
+                new_traj.points.append(self.points[i])
+
+        # Add end point (exact match or interpolated)
+        if end >= self.start_time() and end <= self.end_time():
+            # Check if we already added this point as the start point
+            if new_traj.points and abs(new_traj.points[-1].time - end) < 1e-10:
+                pass  # Already added
+            elif end_idx > 0 and end_idx <= len(times) and abs(times[end_idx - 1] - end) < 1e-10:
+                # Exact match at end
+                end_point = self.points[end_idx - 1]
+                new_traj.add_traj_point(end_point)
+            elif end_idx > 0:
+                # Interpolate
+                s = self.points[end_idx - 1] if end_idx > 0 else self.points[0]
+                e = self.points[end_idx] if end_idx < len(times) else self.points[-1]
+                if abs(e.time - s.time) < 1e-10:
+                    end_point = e
+                else:
+                    interp_s = (end - s.time) / (e.time - s.time)
+                    end_point = s.interp(e, interp_s)
+                new_traj.add_traj_point(end_point)
 
         return new_traj
 

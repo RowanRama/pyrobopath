@@ -1,5 +1,7 @@
 import time
 import numpy as np
+import cProfile
+import pstats
 
 from pyrobopath.process import AgentModel, create_dependency_graph_by_z
 from pyrobopath.toolpath.preprocessing import LayerRangeStep, ShuffleStep
@@ -41,7 +43,7 @@ def two_robot_agent_models():
     agent2 = AgentModel(
         base_frame_position=bf2,
         home_position=np.array([250.0, 0.0, 0.0]),
-        capabilities=[1],
+        capabilities=[0],
         velocity=50.0,
         travel_velocity=50.0,
         collision_model=FCLRobotBBCollisionModel((200.0, 50.0, 300.0), bf2),
@@ -51,7 +53,7 @@ def two_robot_agent_models():
 
 
 def get_toolpath():
-    filepath = "../test/test_gcode/multi_tool_square.gcode"
+    filepath = "../test/test_gcode/mona_lisa.gcode"
     toolpath = toolpath_from_gcode(filepath)
     ShuffleStep().apply(toolpath)
     LayerRangeStep(0, 2).apply(toolpath)
@@ -175,8 +177,12 @@ def batched_parallel_planner_example():
 
 
 if __name__ == "__main__":
-    base_planner_example()
-    depth_based_sequential_planner_example()
-    depth_based_parallel_planner_example()
-    batched_sequential_planner_example()
-    batched_parallel_planner_example()
+    with cProfile.Profile() as pr:
+        base_planner_example()
+    
+    pr.print_stats('cumulative')
+
+    # depth_based_sequential_planner_example()
+    # depth_based_parallel_planner_example()
+    # batched_sequential_planner_example()
+    # batched_parallel_planner_example()

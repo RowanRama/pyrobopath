@@ -201,7 +201,12 @@ class Transform:
     """
 
     def __init__(self, trans: ArrayLike3 | None = None, orient: Quat | None = None):
-        self._trans = np.zeros(3) if trans is None else np.asarray(trans)
+        if trans is None:
+            self._trans = np.zeros(3)
+        elif isinstance(trans, np.ndarray):
+            self._trans = trans
+        else:
+            self._trans = np.asarray(trans)
 
         if orient is None:
             self.quat = quat.one
