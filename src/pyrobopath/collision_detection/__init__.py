@@ -19,3 +19,10 @@ from .fcl_collision_models import (
     FCLBoxCollisionModel,
     FCLRobotBBCollisionModel,
 )
+from .cached_models import (
+    CachedCollisionModel,
+    MVEECachedModel,
+    BhattacharyyaCachedModel,
+    CascadeCachedModel,
+    LearnedCachedModel,
+)

@@ -1,4 +1,4 @@
-from typing import List, Dict, Hashable
+from typing import List, Dict, Hashable, Optional
 import numpy as np
 
 from pyrobopath.process import AgentModel
@@ -9,7 +9,119 @@ from pyrobopath.collision_detection import (
 )
 from pyrobopath.scheduling import Interval
 
-from .schedule import ContourEvent, ToolpathSchedule, MultiAgentToolpathSchedule
+from .schedule import ContourEvent, MoveEvent, ToolpathSchedule, MultiAgentToolpathSchedule
+
+
+def _move_segments_xy(event: MoveEvent):
+    """Yield consecutive (p, q) 2-D segment pairs from a MoveEvent's path."""
+    path = event.data
+    for i in range(len(path) - 1):
+        p = np.asarray(path[i][:2],   dtype=float)
+        q = np.asarray(path[i+1][:2], dtype=float)
+        yield p, q
+
+
+def _travel_intersects_ellipsoids(move_events, contour_events, cache, safety_m):
+    """Return True if any segment in move_events passes through the inflated
+    ellipsoid of any contour in contour_events.
+
+    Used to check whether travel/depart/home moves cross the other agent's
+    active task regions — the gap not covered by the contour-pair prefilter.
+    """
+    try:
+        from pyrobopath.collision_detection.ellipsoid_filter import (
+            _segment_intersects_ellipsoid,
+        )
+    except ImportError:
+        return False   # can't check — be conservative and allow FCL
+
+    for ev in move_events:
+        if not isinstance(ev, MoveEvent) or isinstance(ev, ContourEvent):
+            continue
+        for p, q in _move_segments_xy(ev):
+            for ce in contour_events:
+                record = cache.get(ce.contour.id)
+                if record is None or not hasattr(record, "mu_e"):
+                    return True   # no cached geometry — be conservative
+                M_inf = record.inflated_M(safety_m)
+                if _segment_intersects_ellipsoid(p, q, record.mu_e, M_inf):
+                    return True
+    return False
+
+
+def _all_contour_pairs_prefiltered_safe(
+    prefilter,
+    events_a,
+    events_b,
+    base_a,
+    base_b,
+    t_start: float = None,
+    t_end: float = None,
+) -> bool:
+    """Return True only if the prefilter can certify the full event chain in
+    events_a as safe against all temporally overlapping events in events_b.
+
+    Two checks are performed:
+
+    1. Contour-pair check — every ContourEvent in events_a is certified safe
+       against every temporally overlapping ContourEvent in events_b using the
+       cached ellipsoid filter.
+
+    2. Travel-segment check — every non-contour MoveEvent (travel, depart,
+       home) in events_a is checked for intersection with the inflated
+       ellipsoids of concurrent ContourEvents in events_b, and vice versa.
+       This catches cases where a robot's transition moves pass through a
+       region the other robot is actively printing.
+
+    Returns False (fall back to FCL) if either check fails or if the necessary
+    cache data is unavailable.
+    """
+    if t_start is not None and t_end is not None:
+        concurrent_b = [
+            e for e in events_b
+            if isinstance(e, ContourEvent) and e.start < t_end and e.end > t_start
+        ]
+    else:
+        concurrent_b = [e for e in events_b if isinstance(e, ContourEvent)]
+
+    contours_a = [e.contour.id for e in events_a if isinstance(e, ContourEvent)]
+    contours_b = [e.contour.id for e in concurrent_b]
+
+    if not contours_a or not contours_b:
+        return False
+
+    # 1. Contour-pair spatial check
+    for id_a in contours_a:
+        for id_b in contours_b:
+            if not prefilter.is_safe_pair(id_a, id_b, base_a, base_b):
+                return False
+
+    # 2. Travel-segment intersection check (A's moves vs B's concurrent contours)
+    cache = getattr(prefilter, "_cache", {})
+    safety_m = float(getattr(prefilter, "safety_m", 0.0))
+
+    if _travel_intersects_ellipsoids(events_a, concurrent_b, cache, safety_m):
+        return False
+
+    # Also check B's move events vs A's concurrent contours
+    if t_start is not None and t_end is not None:
+        b_moves = [
+            e for e in events_b
+            if isinstance(e, MoveEvent)
+            and not isinstance(e, ContourEvent)
+            and e.start < t_end and e.end > t_start
+        ]
+    else:
+        b_moves = [
+            e for e in events_b
+            if isinstance(e, MoveEvent) and not isinstance(e, ContourEvent)
+        ]
+
+    contour_events_a = [e for e in events_a if isinstance(e, ContourEvent)]
+    if _travel_intersects_ellipsoids(b_moves, contour_events_a, cache, safety_m):
+        return False
+
+    return True
 
 
 def schedule_to_trajectory(
@@ -129,6 +241,7 @@ def event_causes_collision(
     schedule: MultiAgentToolpathSchedule,
     agent_models: Dict[Hashable, AgentModel],
     threshold: float,
+    metrics=None,
 ):
     """Determines if adding 'event' to 'schedule' will cause a collision in the
     resulting trajectory.
@@ -161,10 +274,28 @@ def event_causes_collision(
         new_sched, event.start, et, agent_models[agent].home_position
     )
 
+    prefilter = agent_models[agent].collision_prefilter
+    base_a = np.array(agent_models[agent].base_frame_position)
+
     for a, s in schedule.schedules.items():
         if a == agent:
             continue
 
+        if metrics is not None:
+            metrics.record_pair_checked()
+
+        if prefilter is not None:
+            base_b = np.array(agent_models[a].base_frame_position)
+            if _all_contour_pairs_prefiltered_safe(
+                prefilter, [event], s._events, base_a, base_b,
+                t_start=event.start, t_end=et,
+            ):
+                if metrics is not None:
+                    metrics.record_prefilter_pruned()
+                continue
+
+        if metrics is not None:
+            metrics.record_fcl_checked()
         traj = schedule_to_trajectory(s, event.start, et, agent_models[a].home_position)
         collide = trajectory_collision_query(
             agent_models[agent].collision_model,
@@ -174,6 +305,8 @@ def event_causes_collision(
             threshold,
         )
         if collide:
+            if metrics is not None:
+                metrics.record_collision_detected()
             return True
     return False
 
@@ -216,6 +349,7 @@ def events_cause_collision(
     schedule: MultiAgentToolpathSchedule,
     agent_models: Dict[Hashable, AgentModel],
     threshold: float,
+    metrics=None,
 ):
     """
     Determines if adding the 'events' to 'schedule' will cause a collision in the
@@ -238,10 +372,29 @@ def events_cause_collision(
         new_sched.add_event(event)
 
     event_trajs = schedule_to_trajectories(new_sched, st, et)
+
+    prefilter = agent_models[agent].collision_prefilter
+    base_a = np.array(agent_models[agent].base_frame_position)
+
     for a, s in schedule.schedules.items():
         if a == agent:
             continue
 
+        if metrics is not None:
+            metrics.record_pair_checked()
+
+        if prefilter is not None:
+            base_b = np.array(agent_models[a].base_frame_position)
+            if _all_contour_pairs_prefiltered_safe(
+                prefilter, events, s._events, base_a, base_b,
+                t_start=st, t_end=et,
+            ):
+                if metrics is not None:
+                    metrics.record_prefilter_pruned()
+                continue
+
+        if metrics is not None:
+            metrics.record_fcl_checked()
         trajs = schedule_to_trajectories(s, st, et)
         concurrent_trajs = concurrent_trajectory_pairs(event_trajs, trajs)
         for pair in concurrent_trajs:
@@ -254,5 +407,7 @@ def events_cause_collision(
             )
 
             if collide:
+                if metrics is not None:
+                    metrics.record_collision_detected()
                 return True
     return False

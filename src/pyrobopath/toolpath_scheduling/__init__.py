@@ -12,6 +12,7 @@ from .toolpath_collision import (
     concurrent_trajectory_pairs,
 )
 from .toolpath_scheduler import MultiAgentToolpathPlanner, PlanningOptions
+from .metrics import PlanningMetrics
 from .batched_planners import BatchedSequentialPlanner, BatchedParallelPlanner
 from .depth_based_planners import DepthBasedSequentialPlanner, DepthBasedParallelPlanner
 from .visualization import (

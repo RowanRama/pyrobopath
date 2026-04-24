@@ -136,7 +136,7 @@ def batched_sequential_planner_example():
 
     # create planner
     agent_models = two_robot_agent_models()
-    planner = BatchedSequentialPlanner(agent_models, 5)
+    planner = MultiAgentToolpathPlanner(agent_models, 5)
 
     msg = "BatchedSequentialPlanner: Scheduling Multi-tool Square"
     print(f"{(80 * '#')}\n{msg}\n{(80 * '#')}\n")

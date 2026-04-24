@@ -1,9 +1,12 @@
 from __future__ import annotations
-from typing import List, Hashable
+from typing import List, Hashable, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
 from pyrobopath.collision_detection import FCLCollisionModel
 from pyrobopath.tools.types import ArrayLike
+
+if TYPE_CHECKING:
+    from pyrobopath.collision_detection.cached_models import CachedCollisionModel
 
 
 @dataclass
@@ -36,3 +39,5 @@ class AgentModel(object):
 
     velocity: float
     travel_velocity: float
+
+    collision_prefilter: Optional["CachedCollisionModel"] = None
