@@ -346,6 +346,10 @@ class MultiAgentToolpathPlanner:
         dg: DependencyGraph,
         options: PlanningOptions,
         metrics: Optional[PlanningMetrics] = None,
+        initial_schedule: Optional[MultiAgentToolpathSchedule] = None,
+        initial_start_times: Optional[Dict[str, float]] = None,
+        initial_positions: Optional[Dict[str, "np.ndarray"]] = None,
+        initial_in_progress: Optional[Dict[int, float]] = None,
     ) -> MultiAgentToolpathSchedule:
         """Plan a multi-agent toolpath schedule.
 
@@ -366,16 +370,50 @@ class MultiAgentToolpathPlanner:
         metrics : PlanningMetrics, optional
             If provided, timing and count data are accumulated into this object
             without altering any planning decisions.
+        initial_schedule, initial_start_times, initial_positions, initial_in_progress
+            Optional hooks used by :mod:`pyrobopath.toolpath_scheduling.replan`
+            to resume planning from a partially-executed state.  See that
+            module's :func:`replan` helper.  All default to ``None``, matching
+            the original fresh-plan behaviour.
         """
         self._validate_toolpath(toolpath)
 
-        schedule = MultiAgentToolpathSchedule()
-        schedule.add_agents(self._agent_models.keys())
+        if initial_schedule is not None:
+            schedule = initial_schedule
+            # Ensure every agent has a slot even if it had no pre-populated events
+            for a in self._agent_models.keys():
+                if a not in schedule.schedules:
+                    schedule.add_agent(a)
+        else:
+            schedule = MultiAgentToolpathSchedule()
+            schedule.add_agents(self._agent_models.keys())
 
         context = SchedulingContext(self._agent_models, options)
+        if initial_start_times:
+            for a, t_val in initial_start_times.items():
+                if a in context.start_times:
+                    context.set_agent_start_time(a, float(t_val))
+        if initial_positions:
+            for a, pos in initial_positions.items():
+                if a in context.positions:
+                    context.positions[a] = pos
+
         tm = TaskManager(toolpath, dg)
-        tm.frontier.update(dg.roots())
-        t = 0
+        in_progress_ids = set((initial_in_progress or {}).keys())
+        # Initial frontier: nodes not completed, not currently in-progress,
+        # with all predecessors already complete.  For a fresh plan this is
+        # equivalent to dg.roots().
+        tm.frontier.update(
+            n for n in dg._graph.nodes
+            if n not in dg._completed_tasks
+            and n not in in_progress_ids
+            and dg.can_start(n)
+        )
+        if initial_in_progress:
+            for cid, t_end in initial_in_progress.items():
+                tm.in_progress[cid] = float(t_end)
+
+        t = min(context.start_times.values(), default=0.0)
 
         if metrics is not None:
             metrics.n_tasks = len(toolpath.contours)

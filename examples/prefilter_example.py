@@ -31,12 +31,14 @@ from pyrobopath.toolpath_scheduling import (
     PlanningOptions,
     PlanningMetrics,
     animate_multi_agent_toolpath_full,
+    extract_replan_context,
+    replan as replan_schedule,
 )
 
 from utilities import toolpath_from_gcode, print_schedule_info
 
 
-GCODE_FILE = "../test/test_gcode/hollow_square.gcode"
+GCODE_FILE = "../test/test_gcode/aim.gcode"
 LAYER_RANGE = (0, 1)
 SAFETY_M    = 50
 
@@ -96,21 +98,21 @@ def main():
     toolpath = toolpath_from_gcode(GCODE_FILE)
 
     preprocessor = ToolpathPreprocessor()
-    preprocessor.add_step(MaxContourLengthStep(250.0))
+    preprocessor.add_step(MaxContourLengthStep(500.0))
     preprocessor.add_step(LayerRangeStep(*LAYER_RANGE))
     preprocessor.process(toolpath)
     dg = create_dependency_graph_by_z(toolpath)
 
     prefilter = MVEECachedModel(safety_m=SAFETY_M)
-    agent_models = make_agent_models(args.n_robots, prefilter)
+    agent_models = make_agent_models(args.n_robots)
 
     options = PlanningOptions(
         retract_height=10.0,
         collision_offset=3.0,
         collision_gap_threshold=5.0,
         # task_priority="farthest_centroid",
-        # task_priority="nearest_start",
-        task_priority="nearest_base",
+        task_priority="nearest_start",
+        # task_priority="nearest_base",
     )
 
     metrics = PlanningMetrics()
@@ -122,8 +124,25 @@ def main():
     print_schedule_info(sched)
     metrics.print_summary("MVEE")
 
+    # Closure capturing the current schedule so the replan UI can resume from
+    # any time t against the same toolpath / dg / options.  Must be a closure
+    # because each replan needs to see the most recent schedule state.
+    current = {"sched": sched}
+
+    def replan_fn(t_replan, disabled_agents):
+        ctx = extract_replan_context(
+            current["sched"], t_replan, disabled_agents=disabled_agents,
+        )
+        new_sched = replan_schedule(
+            agent_models, toolpath, dg, options, ctx,
+        )
+        current["sched"] = new_sched
+        return new_sched
+
     animate_multi_agent_toolpath_full(
-        toolpath, sched, agent_models, limits=((-550, 550), (-550, 550))
+        toolpath, sched, agent_models,
+        limits=((-550, 550), (-550, 550)),
+        replan_fn=replan_fn,
     )
 
 

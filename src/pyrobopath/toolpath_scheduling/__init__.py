@@ -13,6 +13,12 @@ from .toolpath_collision import (
 )
 from .toolpath_scheduler import MultiAgentToolpathPlanner, PlanningOptions
 from .metrics import PlanningMetrics
+from .replan import (
+    InProgressTask,
+    ReplanContext,
+    extract_replan_context,
+    replan,
+)
 from .batched_planners import BatchedSequentialPlanner, BatchedParallelPlanner
 from .depth_based_planners import DepthBasedSequentialPlanner, DepthBasedParallelPlanner
 from .visualization import (
